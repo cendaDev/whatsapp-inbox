@@ -9,7 +9,7 @@ services:
     env_file:
       - .env
     volumes:
-      - ./data:/app/data   # persistencia SQLite
-      - ./index.html:/app/index.html:ro
+      - ./data:/app/data           # persistencia SQLite
+      - ./public:/app/public:ro    # sirve tu index.html
       - ./server.js:/app/server.js:ro
     restart: unless-stopped
