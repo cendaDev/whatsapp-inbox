@@ -1,11 +1,15 @@
-version: "3.8"
+version: "3.9"
 
 services:
   whatsapp-inbox:
     build: .
     container_name: whatsapp-inbox
-    restart: always
-    env_file:
-      - .env
     ports:
       - "3000:3000"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data   # persistencia SQLite
+      - ./index.html:/app/index.html:ro
+      - ./server.js:/app/server.js:ro
+    restart: unless-stopped

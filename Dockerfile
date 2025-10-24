@@ -1,20 +1,15 @@
-# Imagen base
-FROM node:22-alpine
+# Node 20 en imagen ligera
+FROM node:20-alpine
 
-# Directorio de trabajo dentro del contenedor
 WORKDIR /app
 
-# Copiamos package.json y package-lock.json
-COPY package*.json ./
+# Instalar dependencias del sistema para better-sqlite3
+RUN apk add --no-cache make g++ python3
 
-# Instalamos dependencias
-RUN npm install --production
+COPY package.json ./
+RUN npm install --omit=dev
 
-# Copiamos el resto del proyecto
 COPY . .
 
-# Expone el puerto del servidor
 EXPOSE 3000
-
-# Comando por defecto
 CMD ["npm", "start"]

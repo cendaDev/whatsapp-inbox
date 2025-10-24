@@ -2,140 +2,146 @@
 <html lang="es">
 <head>
     <meta charset="utf-8" />
-    <title>WhatsApp Inbox (demo) — Cloud API</title>
+    <title>WhatsApp Inbox – CENDA</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <style>
-        body{font-family:system-ui,Segoe UI,Arial,sans-serif; margin:0; background:#0b1220; color:#e8eefc}
-        header{padding:16px 20px; background:#111a2f; border-bottom:1px solid #1f2a48}
-        h1{margin:0; font-size:18px}
-        .wrap{display:grid; grid-template-columns: 360px 1fr; height: calc(100vh - 64px)}
-        aside{border-right:1px solid #1f2a48; overflow:auto}
-        main{display:flex; flex-direction:column; height:100%}
-        .item{padding:12px 14px; border-bottom:1px solid #1f2a48; cursor:pointer}
-        .item:hover{background:#0e1930}
-        .name{font-weight:600}
-        .meta{opacity:.7; font-size:12px}
-        .msg{margin-top:6px; white-space:pre-wrap}
-        .chat{flex:1; overflow:auto; padding:16px}
-        .bubble{max-width:70%; margin:8px 0; padding:10px 12px; border-radius:12px; background:#16213f; position:relative}
-        .me{background:#233567; margin-left:auto}
-        .status{font-size:11px; opacity:.75; margin-top:4px; text-align:right}
-        .composer{display:flex; gap:8px; padding:12px; border-top:1px solid #1f2a48; background:#0f1830}
-        .composer textarea{flex:1; resize:vertical; min-height:48px; border-radius:10px; border:1px solid #2a3a68; background:#0b1220; color:#e8eefc; padding:10px}
-        .composer button{padding:10px 16px; border-radius:10px; border:0; background:#3a66ff; color:white; font-weight:600; cursor:pointer}
-        .composer button:disabled{opacity:.5; cursor:not-allowed}
-        .empty{opacity:.7; padding:24px}
+        *{box-sizing:border-box} body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Arial}
+        .app{display:grid;grid-template-columns:320px 1fr;height:100vh}
+        .sidebar{border-right:1px solid #e5e7eb;overflow:auto}
+        .header{padding:12px 14px;border-bottom:1px solid #e5e7eb;font-weight:600}
+        .chat{padding:10px 14px;border-bottom:1px solid #f3f4f6;cursor:pointer}
+        .chat:hover{background:#f9fafb}
+        .chat .phone{font-weight:600}
+        .chat .when{color:#6b7280;font-size:12px}
+        .content{display:flex;flex-direction:column;height:100%}
+        .messages{flex:1;overflow:auto;padding:16px;background:#f8fafc}
+        .bubble{max-width:70%;margin:6px 0;padding:10px 12px;border-radius:14px;background:white;box-shadow:0 1px 1px rgba(0,0,0,.04)}
+        .out{margin-left:auto;background:#dcfce7}
+        .meta{font-size:11px;color:#6b7280;margin-top:4px}
+        .composer{display:flex;gap:8px;padding:10px;border-top:1px solid #e5e7eb;background:#fff}
+        input,button{font-size:16px}
+        input[type=text]{flex:1;padding:10px;border:1px solid #e5e7eb;border-radius:8px}
+        button{padding:10px 14px;border:1px solid #10b981;background:#10b981;color:#fff;border-radius:8px;cursor:pointer}
+        button:hover{background:#0ea47a;border-color:#0ea47a}
+        .empty{margin:auto;color:#9ca3af}
     </style>
 </head>
 <body>
-<header>
-    <h1>WhatsApp Inbox (demo) — Cloud API</h1>
-</header>
-
-<div class="wrap">
-    <aside id="list"></aside>
-    <main>
-        <div id="chat" class="chat">
-            <div class="empty">Selecciona una conversación para responder.</div>
-        </div>
+<div class="app">
+    <div class="sidebar">
+        <div class="header">Conversaciones</div>
+        <div id="chats"></div>
+    </div>
+    <div class="content">
+        <div class="header" id="title">Selecciona un chat</div>
+        <div class="messages" id="messages"><div class="empty">No hay chat seleccionado</div></div>
         <div class="composer">
-            <textarea id="body" placeholder="Escribe tu respuesta..."></textarea>
-            <button id="sendBtn" disabled>Enviar</button>
+            <input id="to" type="text" placeholder="Teléfono E.164 (ej. 573001112233)" />
+            <input id="text" type="text" placeholder="Escribe un mensaje…" />
+            <button id="send">Enviar</button>
         </div>
-    </main>
+    </div>
 </div>
 
 <script>
-    let conversations = []; // [{ waId, name, msgs: [...] }]
-    let current = null;
+    let data = [];
+    let selectedPhone = null;
 
-    async function load() {
-        const r = await fetch("/api/messages");
-        conversations = await r.json();
-        renderList();
-        renderChat();
+    const elChats = document.getElementById("chats");
+    const elMsgs  = document.getElementById("messages");
+    const elTitle = document.getElementById("title");
+    const elTo    = document.getElementById("to");
+    const elText  = document.getElementById("text");
+    const elSend  = document.getElementById("send");
+
+    function fmt(ts){
+        const d = new Date((ts||0)*1000);
+        return isNaN(d) ? "" : d.toLocaleString();
     }
 
-    function renderList() {
-        const list = document.getElementById("list");
-        list.innerHTML = "";
-        if (conversations.length === 0) {
-            list.innerHTML = '<div class="empty">Sin mensajes aún.</div>';
-            return;
-        }
-        for (const c of conversations) {
-            const last = c.msgs[c.msgs.length-1];
-            const preview = last?.text ? (last.text.length>120 ? last.text.slice(0,119)+"…" : last.text) : "";
-            const el = document.createElement("div");
-            el.className = "item";
-            el.innerHTML = `
-          <div class="name">${c.name || c.waId}</div>
-          <div class="meta">${c.waId}</div>
-          <div class="msg">${preview}</div>
+    function renderChats(){
+        elChats.innerHTML = "";
+        data.forEach(conv=>{
+            const div = document.createElement("div");
+            div.className = "chat";
+            div.onclick = ()=>{
+                selectedPhone = conv.phone;
+                elTo.value = conv.phone;
+                renderMessages();
+            };
+            div.innerHTML = `
+          <div class="phone">${conv.name ? conv.name + " · " : ""}${conv.phone}</div>
+          <div class="when">${fmt(conv.last_ts)}</div>
         `;
-            el.onclick = () => { current = c.waId; renderChat(); };
-            list.appendChild(el);
-        }
+            elChats.appendChild(div);
+        });
     }
 
-    function renderChat() {
-        const chat = document.getElementById("chat");
-        const btn = document.getElementById("sendBtn");
-        const body = document.getElementById("body");
-
-        const c = conversations.find(x => x.waId === current);
-        chat.innerHTML = "";
-        if (!c) {
-            btn.disabled = true;
-            chat.innerHTML = '<div class="empty">Selecciona una conversación.</div>';
+    function renderMessages(){
+        const conv = data.find(c => c.phone === selectedPhone);
+        if(!conv){
+            elTitle.textContent = "Selecciona un chat";
+            elMsgs.innerHTML = `<div class="empty">No hay chat seleccionado</div>`;
             return;
         }
-        btn.disabled = false;
-
-        for (const m of c.msgs) {
+        elTitle.textContent = `${conv.name ? conv.name+" · " : ""}${conv.phone}`;
+        elMsgs.innerHTML = "";
+        conv.messages.forEach(m=>{
             const b = document.createElement("div");
-            b.className = "bubble" + (m.direction === "out" ? " me" : "");
+            b.className = "bubble " + (m.direction === "out" ? "out" : "in");
+            const status = m.direction === "out" ? ` · ${m.status||"sent"}` : "";
             b.innerHTML = `
-          <div>${m.text || ""}</div>
-          ${m.direction === "out" ? `<div class="status">${statusLabel(m.status)}</div>` : ""}
+          <div>${(m.text||"").replace(/</g,"&lt;")}</div>
+          <div class="meta">${fmt(m.ts)}${status}</div>
         `;
-            chat.appendChild(b);
-        }
-        chat.scrollTop = chat.scrollHeight;
+            elMsgs.appendChild(b);
+            elMsgs.scrollTop = elMsgs.scrollHeight;
+        });
+    }
 
-        // Enviar
-        document.getElementById("sendBtn").onclick = async () => {
-            const text = body.value.trim();
-            if (!text) return;
-            const r = await fetch("/api/send", {
-                method: "POST",
-                headers: {"Content-Type":"application/json"},
-                body: JSON.stringify({ to: c.waId, body: text })
-            });
-            if (r.ok) {
-                body.value = "";
-                // refresco rápido para ver el 'sent'
-                setTimeout(load, 300);
-            } else {
-                const err = await r.json().catch(()=>({}));
-                alert("Error al enviar: " + (err?.detail?.error?.message || err?.error || "desconocido"));
+    async function load(){
+        const res = await fetch(selectedPhone ? `/api/messages?phone=${encodeURIComponent(selectedPhone)}` : "/api/messages");
+        data = await res.json();
+        renderChats();
+        if(selectedPhone && !data.find(c => c.phone === selectedPhone)){
+            // si se filtró, data es [conv]; si no, busca en data general
+            const filtered = data.length===1 && data[0].phone===selectedPhone;
+            if(!filtered){
+                // recargar solo el seleccionado
+                const r = await fetch(`/api/messages?phone=${encodeURIComponent(selectedPhone)}`);
+                const single = await r.json();
+                if(single.length) {
+                    const conv = single[0];
+                    const idx = data.findIndex(c=>c.phone===conv.phone);
+                    if(idx>=0) data[idx]=conv; else data.push(conv);
+                }
             }
-        };
+        }
+        renderMessages();
     }
 
-    function statusLabel(s) {
-        if (!s) return "";
-        if (s === "sent") return "Enviado";
-        if (s === "delivered") return "Entregado";
-        if (s === "read") return "Leído";
-        if (s === "failed") return "Fallido";
-        if (s === "received") return "Recibido";
-        return s;
-    }
+    elSend.onclick = async ()=>{
+        const to = (elTo.value||"").trim();
+        const text = (elText.value||"").trim();
+        if(!to || !text) return alert("Completa teléfono y mensaje");
+        const r = await fetch("/api/send", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to, text })
+        });
+        const j = await r.json();
+        if(!r.ok){
+            console.error(j);
+            return alert("Error al enviar: " + (j?.details?.error?.message || j.error));
+        }
+        elText.value = "";
+        selectedPhone = to;
+        await load();
+    };
 
-    // Auto-refresh
-    setInterval(load, 4000);
+    // Primer carga + refresco cada 4s
     load();
+    setInterval(load, 4000);
 </script>
 </body>
 </html>

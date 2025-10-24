@@ -1,182 +1,228 @@
 import express from "express";
+import fetch from "node-fetch";
 import dotenv from "dotenv";
+import path from "path";
+import { fileURLToPath } from "url";
+import bodyParser from "body-parser";
+import Database from "better-sqlite3";
 
 dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const app = express();
-app.use(express.json());
-app.use(express.static("public"));
-
+// ---------- Config ----------
 const PORT = process.env.PORT || 3000;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WA_TOKEN = process.env.WA_TOKEN;
-const PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID;
+const WA_PHONE_NUMBER_ID = process.env.WA_PHONE_NUMBER_ID;
 
-/* =======================
-   Almacenamiento en memoria
-   Estructura:
-   conversations: Map(waId => {
-     waId, name,
-     msgs: [{ id, direction: 'in'|'out', type, text, timestamp, status }]
-   })
-   msgIndex: Map(messageId => waId)  // para actualizar estados por webhook
-======================= */
-const conversations = new Map();
-const msgIndex = new Map();
-
-function ensureConv(waId, name = null) {
-    if (!conversations.has(waId)) {
-        conversations.set(waId, { waId, name: name || waId, msgs: [] });
-    } else if (name) {
-        const c = conversations.get(waId);
-        if (!c.name || c.name === waId) c.name = name; // mejorar nombre si llega
-    }
-    return conversations.get(waId);
+if (!VERIFY_TOKEN || !WA_TOKEN || !WA_PHONE_NUMBER_ID) {
+    console.error("⚠️ Falta configurar VERIFY_TOKEN, WA_TOKEN o WA_PHONE_NUMBER_ID en .env");
+    process.exit(1);
 }
 
-function pushMsg({ waId, name, id, direction, type, text, timestamp, status }) {
-    const conv = ensureConv(waId, name);
-    conv.msgs.push({
-        id,
-        direction, // 'in' o 'out'
-        type,      // text, image, etc.
+// ---------- DB (SQLite) ----------
+const DATA_DIR = path.join(__dirname, "data");
+const DB_PATH = path.join(DATA_DIR, "inbox.sqlite");
+await (await import("fs/promises")).mkdir(DATA_DIR, { recursive: true });
+
+const db = new Database(DB_PATH);
+db.pragma("journal_mode = WAL");
+
+// Tablas
+db.exec(`
+    CREATE TABLE IF NOT EXISTS conversations (
+                                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                                 phone TEXT UNIQUE NOT NULL,
+                                                 name TEXT,
+                                                 last_ts INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+                                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                            conversation_id INTEGER NOT NULL,
+                                            wa_msg_id TEXT,                    -- id devuelto por Cloud API (para status)
+                                            direction TEXT NOT NULL CHECK(direction IN ('in','out')),
+                                            text TEXT,
+                                            status TEXT,                       -- sent/delivered/read/failed para 'out' | 'received' para 'in'
+                                            ts INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                                            FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_messages_conv_ts ON messages(conversation_id, ts DESC);
+`);
+
+// Helpers DB
+const upsertConversation = db.prepare(`
+    INSERT INTO conversations (phone, name, last_ts)
+    VALUES (@phone, @name, @last_ts)
+    ON CONFLICT(phone) DO UPDATE SET
+    name=COALESCE(excluded.name, conversations.name),
+    last_ts=excluded.last_ts
+`);
+const getConversationByPhone = db.prepare(`SELECT * FROM conversations WHERE phone = ?`);
+const getConversationById = db.prepare(`SELECT * FROM conversations WHERE id = ?`);
+const insertMessage = db.prepare(`
+    INSERT INTO messages (conversation_id, wa_msg_id, direction, text, status, ts)
+    VALUES (@conversation_id, @wa_msg_id, @direction, @text, @status, @ts)
+`);
+const updateMessageStatusByWaId = db.prepare(`
+    UPDATE messages SET status = @status, ts = MAX(ts, @ts)
+    WHERE wa_msg_id = @wa_msg_id
+`);
+const listConversations = db.prepare(`
+    SELECT id, phone, name, last_ts FROM conversations ORDER BY last_ts DESC
+`);
+const listMessagesByConversation = db.prepare(`
+    SELECT id, wa_msg_id, direction, text, status, ts
+    FROM messages
+    WHERE conversation_id = ?
+    ORDER BY ts ASC
+`);
+
+// Crea/actualiza conversación y devuelve su fila
+function ensureConversation(phone, name = null, tsSec = Math.floor(Date.now()/1000)) {
+    upsertConversation.run({ phone, name, last_ts: tsSec });
+    return getConversationByPhone.get(phone);
+}
+
+// Guarda mensaje y actualiza last_ts de la conversación
+function pushMessage({ phone, name, direction, text, status, wa_msg_id = null, tsSec = Math.floor(Date.now()/1000) }) {
+    const conv = ensureConversation(phone, name, tsSec);
+    insertMessage.run({
+        conversation_id: conv.id,
+        wa_msg_id,
+        direction,
         text,
-        timestamp: Number(timestamp) || Date.now(),
-        status     // received | sent | delivered | read | failed
+        status,
+        ts: tsSec
     });
-    if (id) msgIndex.set(id, waId);
 }
 
-function updateStatus(messageId, newStatus, ts) {
-    const waId = msgIndex.get(messageId);
-    if (!waId) return;
-    const conv = conversations.get(waId);
-    if (!conv) return;
-    const msg = conv.msgs.find(m => m.id === messageId);
-    if (msg) {
-        msg.status = newStatus;
-        if (ts) msg.timestamp = Number(ts) * 1000;
-    }
-}
+// ---------- App ----------
+const app = express();
+app.use(bodyParser.json({ limit: "2mb" }));
 
-/* =======================
-   LOG mínimo (útil debug)
-======================= */
-app.use((req, _res, next) => {
-    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
-    next();
-});
+// 🚩 servir estáticos DESDE /public (corrección clave)
+app.use(express.static(path.join(__dirname, "public")));
 
-/* =======================
-   VERIFY WEBHOOK (GET)
-======================= */
+// ===== Webhook VERIFY (GET) =====
 app.get("/webhook", (req, res) => {
     const mode = req.query["hub.mode"];
     const token = req.query["hub.verify_token"];
     const challenge = req.query["hub.challenge"];
+
     if (mode === "subscribe" && token === VERIFY_TOKEN) {
         return res.status(200).send(challenge);
     }
     return res.sendStatus(403);
 });
 
-/* =======================
-   RECEPCIÓN WEBHOOK (POST)
-   - Mensajes entrantes
-   - Estados (statuses) de mensajes salientes
-======================= */
+// ===== Webhook eventos (POST) =====
 app.post("/webhook", (req, res) => {
+    const body = req.body;
     try {
-        const entry = req.body?.entry?.[0];
-        const change = entry?.changes?.[0];
-        const value  = change?.value;
+        if (body?.object !== "whatsapp_business_account") {
+            return res.sendStatus(200); // ignorar otros objetos
+        }
 
-        // 1) MENSAJES ENTRANTES
-        const messages = value?.messages;
-        if (Array.isArray(messages)) {
-            const contactName = value?.contacts?.[0]?.profile?.name || null;
-            const waId        = value?.contacts?.[0]?.wa_id || messages[0]?.from;
+        for (const entry of body.entry || []) {
+            for (const change of entry.changes || []) {
+                const value = change.value || {};
 
-            for (const msg of messages) {
-                const mType = msg.type;
-                let text = "";
-                if (mType === "text") text = msg.text?.body || "";
-                else if (mType === "interactive") {
-                    text =
-                        msg.interactive?.button_reply?.title ||
+                // 1) Mensajes entrantes
+                const msg = value.messages?.[0];
+                if (msg) {
+                    const from = msg.from; // teléfono del usuario (E.164)
+                    const name = value.contacts?.[0]?.profile?.name || null;
+                    const text =
+                        msg.text?.body ||
                         msg.interactive?.list_reply?.title ||
-                        "(interacción)";
-                } else {
-                    text = `[${mType}] (no-text)`;
+                        msg.button?.text ||
+                        "(mensaje)";
+                    const tsSec = Number(msg.timestamp) || Math.floor(Date.now() / 1000);
+
+                    pushMessage({
+                        phone: from,
+                        name,
+                        direction: "in",
+                        text,
+                        status: "received",
+                        tsSec
+                    });
                 }
 
-                pushMsg({
-                    waId,
-                    name: contactName,
-                    id: msg.id,
-                    direction: "in",
-                    type: mType,
-                    text,
-                    timestamp: (Number(msg.timestamp) || Date.now()/1000) * 1000,
-                    status: "received"
-                });
+                // 2) Estados de mensajes salientes
+                const st = value.statuses?.[0];
+                if (st) {
+                    const wa_msg_id = st.id;
+                    const status = st.status; // sent, delivered, read, failed, deleted
+                    const tsSec = Number(st.timestamp) || Math.floor(Date.now() / 1000);
+                    updateMessageStatusByWaId.run({ status, wa_msg_id, ts: tsSec });
+
+                    // Actualiza last_ts de la conversación afectada (si conocemos el "to")
+                    const to = st.recipient_id; // E.164
+                    if (to) ensureConversation(to, null, tsSec);
+                }
             }
         }
-
-        // 2) ESTADOS DE MENSAJES (DELIVERED/READ/FAILED/etc.)
-        const statuses = value?.statuses;
-        if (Array.isArray(statuses)) {
-            for (const st of statuses) {
-                const mid = st.id;            // id del mensaje
-                const s   = st.status;        // delivered, read, failed, sent, etc.
-                const ts  = st.timestamp;     // epoch (s)
-                let mapped = s;
-                if (s === "sent") mapped = "sent";
-                if (s === "delivered") mapped = "delivered";
-                if (s === "read") mapped = "read";
-                if (s === "failed") mapped = "failed";
-
-                updateStatus(mid, mapped, ts);
-            }
-        }
+        res.sendStatus(200);
     } catch (e) {
-        console.error("Error webhook:", e);
+        console.error("Error en /webhook:", e);
+        res.sendStatus(500);
     }
-    res.sendStatus(200);
 });
 
-/* =======================
-   API: listar conversaciones
-======================= */
-app.get("/api/messages", (_req, res) => {
-    // Devolver ordenado por última actividad desc
-    const arr = Array.from(conversations.values())
-        .map(c => ({ ...c, msgs: [...c.msgs].sort((a,b)=>a.timestamp-b.timestamp) }))
-        .sort((a,b) => {
-            const at = a.msgs[a.msgs.length-1]?.timestamp || 0;
-            const bt = b.msgs[b.msgs.length-1]?.timestamp || 0;
-            return bt - at;
-        });
-    res.json(arr);
+// ===== API: Listar bandeja con mensajes =====
+// GET /api/messages           → todas las conversaciones con sus mensajes
+// GET /api/messages?phone=... → solo una conversación específica
+app.get("/api/messages", (req, res) => {
+    try {
+        const { phone } = req.query;
+
+        if (phone) {
+            const conv = getConversationByPhone.get(phone);
+            if (!conv) return res.json([]);
+            const msgs = listMessagesByConversation.all(conv.id);
+            return res.json([
+                {
+                    phone: conv.phone,
+                    name: conv.name,
+                    last_ts: conv.last_ts,
+                    messages: msgs
+                }
+            ]);
+        }
+
+        // Todas las conversaciones
+        const convs = listConversations.all();
+        const result = convs.map((c) => ({
+            phone: c.phone,
+            name: c.name,
+            last_ts: c.last_ts,
+            messages: listMessagesByConversation.all(c.id)
+        }));
+        res.json(result);
+    } catch (e) {
+        console.error("Error en GET /api/messages:", e);
+        res.status(500).json({ error: "internal_error" });
+    }
 });
 
-/* =======================
-   API: enviar mensaje (saliente)
-======================= */
+// ===== API: Enviar mensaje =====
 app.post("/api/send", async (req, res) => {
     try {
-        const { to, body } = req.body;
-        if (!to || !body) {
-            return res.status(400).json({ error: "to y body son requeridos" });
+        const { to, text } = req.body || {};
+        if (!to || !text) {
+            return res.status(400).json({ error: "Faltan campos: to, text" });
         }
 
-        const url = `https://graph.facebook.com/v21.0/${PHONE_NUMBER_ID}/messages`;
-
+        const url = `https://graph.facebook.com/v20.0/${WA_PHONE_NUMBER_ID}/messages`;
         const payload = {
             messaging_product: "whatsapp",
             to,
             type: "text",
-            text: { body }
+            text: { body: text }
         };
 
         const r = await fetch(url, {
@@ -190,37 +236,41 @@ app.post("/api/send", async (req, res) => {
 
         const data = await r.json();
         if (!r.ok) {
-            console.error("WA send error:", data);
-            return res.status(500).json({ error: "WhatsApp API error", detail: data });
+            console.error("Error Cloud API:", data);
+            return res
+                .status(502)
+                .json({ error: "cloud_api_error", details: data });
         }
 
-        // id del mensaje saliente
-        const outId = data?.messages?.[0]?.id || null;
+        const wa_msg_id = data?.messages?.[0]?.id || null;
+        const tsSec = Math.floor(Date.now() / 1000);
 
-        // Guardar en conversación como 'out'
-        pushMsg({
-            waId: to,
-            name: "Contacto",
-            id: outId,
+        // Guardar 'out' con estado inicial 'sent'
+        pushMessage({
+            phone: to,
+            name: null,
             direction: "out",
-            type: "text",
-            text: body,
-            timestamp: Date.now(),
-            status: "sent"
+            text,
+            status: "sent",
+            wa_msg_id,
+            tsSec
         });
 
-        return res.json({ ok: true, data });
+        return res.json({ ok: true, id: wa_msg_id });
     } catch (e) {
-        console.error(e);
-        res.status(500).json({ error: "server_error" });
+        console.error("Error en POST /api/send:", e);
+        res.status(500).json({ error: "internal_error" });
     }
 });
 
-/* ======================= */
+// 🚩 Servir index.html DESDE /public (corrección clave)
 app.get("/", (_req, res) => {
-    res.sendFile(process.cwd() + "/public/index.html");
+    res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
+// (Opcional) healthcheck simple
+app.get("/health", (_req, res) => res.json({ ok: true }));
+
 app.listen(PORT, () => {
-    console.log(`Servidor listo en http://localhost:${PORT}`);
+    console.log(`✅ Server escuchando en http://localhost:${PORT}`);
 });
