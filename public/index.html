@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="es">
+<head>
+    <meta charset="utf-8" />
+    <title>WhatsApp Inbox (demo) — Cloud API</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+        body{font-family:system-ui,Segoe UI,Arial,sans-serif; margin:0; background:#0b1220; color:#e8eefc}
+        header{padding:16px 20px; background:#111a2f; border-bottom:1px solid #1f2a48}
+        h1{margin:0; font-size:18px}
+        .wrap{display:grid; grid-template-columns: 360px 1fr; height: calc(100vh - 64px)}
+        aside{border-right:1px solid #1f2a48; overflow:auto}
+        main{display:flex; flex-direction:column; height:100%}
+        .item{padding:12px 14px; border-bottom:1px solid #1f2a48; cursor:pointer}
+        .item:hover{background:#0e1930}
+        .name{font-weight:600}
+        .meta{opacity:.7; font-size:12px}
+        .msg{margin-top:6px; white-space:pre-wrap}
+        .chat{flex:1; overflow:auto; padding:16px}
+        .bubble{max-width:70%; margin:8px 0; padding:10px 12px; border-radius:12px; background:#16213f; position:relative}
+        .me{background:#233567; margin-left:auto}
+        .status{font-size:11px; opacity:.75; margin-top:4px; text-align:right}
+        .composer{display:flex; gap:8px; padding:12px; border-top:1px solid #1f2a48; background:#0f1830}
+        .composer textarea{flex:1; resize:vertical; min-height:48px; border-radius:10px; border:1px solid #2a3a68; background:#0b1220; color:#e8eefc; padding:10px}
+        .composer button{padding:10px 16px; border-radius:10px; border:0; background:#3a66ff; color:white; font-weight:600; cursor:pointer}
+        .composer button:disabled{opacity:.5; cursor:not-allowed}
+        .empty{opacity:.7; padding:24px}
+    </style>
+</head>
+<body>
+<header>
+    <h1>WhatsApp Inbox (demo) — Cloud API</h1>
+</header>
+
+<div class="wrap">
+    <aside id="list"></aside>
+    <main>
+        <div id="chat" class="chat">
+            <div class="empty">Selecciona una conversación para responder.</div>
+        </div>
+        <div class="composer">
+            <textarea id="body" placeholder="Escribe tu respuesta..."></textarea>
+            <button id="sendBtn" disabled>Enviar</button>
+        </div>
+    </main>
+</div>
+
+<script>
+    let conversations = []; // [{ waId, name, msgs: [...] }]
+    let current = null;
+
+    async function load() {
+        const r = await fetch("/api/messages");
+        conversations = await r.json();
+        renderList();
+        renderChat();
+    }
+
+    function renderList() {
+        const list = document.getElementById("list");
+        list.innerHTML = "";
+        if (conversations.length === 0) {
+            list.innerHTML = '<div class="empty">Sin mensajes aún.</div>';
+            return;
+        }
+        for (const c of conversations) {
+            const last = c.msgs[c.msgs.length-1];
+            const preview = last?.text ? (last.text.length>120 ? last.text.slice(0,119)+"…" : last.text) : "";
+            const el = document.createElement("div");
+            el.className = "item";
+            el.innerHTML = `
+          <div class="name">${c.name || c.waId}</div>
+          <div class="meta">${c.waId}</div>
+          <div class="msg">${preview}</div>
+        `;
+            el.onclick = () => { current = c.waId; renderChat(); };
+            list.appendChild(el);
+        }
+    }
+
+    function renderChat() {
+        const chat = document.getElementById("chat");
+        const btn = document.getElementById("sendBtn");
+        const body = document.getElementById("body");
+
+        const c = conversations.find(x => x.waId === current);
+        chat.innerHTML = "";
+        if (!c) {
+            btn.disabled = true;
+            chat.innerHTML = '<div class="empty">Selecciona una conversación.</div>';
+            return;
+        }
+        btn.disabled = false;
+
+        for (const m of c.msgs) {
+            const b = document.createElement("div");
+            b.className = "bubble" + (m.direction === "out" ? " me" : "");
+            b.innerHTML = `
+          <div>${m.text || ""}</div>
+          ${m.direction === "out" ? `<div class="status">${statusLabel(m.status)}</div>` : ""}
+        `;
+            chat.appendChild(b);
+        }
+        chat.scrollTop = chat.scrollHeight;
+
+        // Enviar
+        document.getElementById("sendBtn").onclick = async () => {
+            const text = body.value.trim();
+            if (!text) return;
+            const r = await fetch("/api/send", {
+                method: "POST",
+                headers: {"Content-Type":"application/json"},
+                body: JSON.stringify({ to: c.waId, body: text })
+            });
+            if (r.ok) {
+                body.value = "";
+                // refresco rápido para ver el 'sent'
+                setTimeout(load, 300);
+            } else {
+                const err = await r.json().catch(()=>({}));
+                alert("Error al enviar: " + (err?.detail?.error?.message || err?.error || "desconocido"));
+            }
+        };
+    }
+
+    function statusLabel(s) {
+        if (!s) return "";
+        if (s === "sent") return "Enviado";
+        if (s === "delivered") return "Entregado";
+        if (s === "read") return "Leído";
+        if (s === "failed") return "Fallido";
+        if (s === "received") return "Recibido";
+        return s;
+    }
+
+    // Auto-refresh
+    setInterval(load, 4000);
+    load();
+</script>
+</body>
+</html>
