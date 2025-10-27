@@ -161,14 +161,44 @@ app.post("/webhook", (req, res) => {
                 const st = value.statuses?.[0];
                 if (st) {
                     const wa_msg_id = st.id;
-                    const status = st.status; // sent, delivered, read, failed, deleted
+                    const status = st.status;
                     const tsSec = Number(st.timestamp) || Math.floor(Date.now() / 1000);
-                    updateMessageStatusByWaId.run({ status, wa_msg_id, ts: tsSec });
+                    const to = st.recipient_id;
 
-                    // Actualiza last_ts de la conversación afectada (si conocemos el "to")
-                    const to = st.recipient_id; // E.164
+                    // Guardar el estado normal
+                    updateMessageStatusByWaId.run({ status, wa_msg_id, ts: tsSec });
                     if (to) ensureConversation(to, null, tsSec);
+
+                    // ⚠️ Verificar errores específicos
+                    const error = st.errors?.[0];
+                    if (status === "failed" && error) {
+                        const code = error.code;
+                        const detail = error.detail || error.title || "";
+
+                        // Detectar si el número no tiene WhatsApp
+                        if (
+                            code === 131026 ||
+                            code === 131047 ||
+                            detail.includes("not a valid WhatsApp user") ||
+                            detail.includes("Recipient phone number not in WhatsApp")
+                        ) {
+                            console.log(`❌ ${to} no tiene WhatsApp (${detail || code})`);
+                            // Puedes registrar esto en una tabla o archivo aparte
+                            db.prepare(
+                                `INSERT INTO messages (conversation_id, direction, text, status, ts)
+                                 VALUES ((SELECT id FROM conversations WHERE phone = ?), 'system',
+                                         'El número no tiene WhatsApp', 'failed', ?)`
+                            ).run(to, tsSec);
+                        } else {
+                            console.log(`⚠️ Error al enviar a ${to}: ${detail || code}`);
+                        }
+                    }
+
+                    if (["sent", "delivered", "read"].includes(status)) {
+                        console.log(`✅ Mensaje a ${to} confirmado (${status})`);
+                    }
                 }
+
             }
         }
         res.sendStatus(200);
