@@ -9,7 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 # Copia solo package.json primero para aprovechar cache
-COPY package.json ./
+COPY package*.json ./
 
 # Instala dependencias dentro del contenedor (NADA de node_modules del host)
 RUN npm ci --omit=dev
