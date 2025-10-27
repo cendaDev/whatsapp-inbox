@@ -39,20 +39,32 @@
         return isNaN(d) ? "" : d.toLocaleString();
     }
 
-    function renderChats(){
+    function renderChats() {
+        // Limpia la lista solo una vez antes de volver a dibujarla
         elChats.innerHTML = "";
-        data.forEach(conv=>{
+
+        data.forEach(conv => {
             const div = document.createElement("div");
             div.className = "chat";
-            div.onclick = ()=>{
+            if (conv.phone === selectedPhone) {
+                div.classList.add("selected"); // resalta el chat activo
+            }
+
+            div.onclick = () => {
                 selectedPhone = conv.phone;
                 elTo.value = conv.phone;
+
+                // Resalta el seleccionado
+                document.querySelectorAll(".chat").forEach(c => c.classList.remove("selected"));
+                div.classList.add("selected");
+
                 renderMessages();
             };
+
             div.innerHTML = `
-          <div class="phone">${conv.name ? conv.name + " · " : ""}${conv.phone}</div>
-          <div class="when">${fmt(conv.last_ts)}</div>
-        `;
+      <div class="phone">${conv.name ? conv.name + " · " : ""}${conv.phone}</div>
+      <div class="when">${fmt(conv.last_ts)}</div>
+    `;
             elChats.appendChild(div);
         });
     }
@@ -79,26 +91,19 @@
         });
     }
 
-    async function load(){
-        const res = await fetch(selectedPhone ? `/api/messages?phone=${encodeURIComponent(selectedPhone)}` : "/api/messages");
-        data = await res.json();
-        renderChats();
-        if(selectedPhone && !data.find(c => c.phone === selectedPhone)){
-            // si se filtró, data es [conv]; si no, busca en data general
-            const filtered = data.length===1 && data[0].phone===selectedPhone;
-            if(!filtered){
-                // recargar solo el seleccionado
-                const r = await fetch(`/api/messages?phone=${encodeURIComponent(selectedPhone)}`);
-                const single = await r.json();
-                if(single.length) {
-                    const conv = single[0];
-                    const idx = data.findIndex(c=>c.phone===conv.phone);
-                    if(idx>=0) data[idx]=conv; else data.push(conv);
-                }
-            }
+    async function load() {
+        try {
+            // Siempre traer TODAS las conversaciones
+            const res = await fetch("/api/messages");
+            data = await res.json();
+
+            renderChats();
+            renderMessages();
+        } catch (err) {
+            console.error("Error al cargar mensajes:", err);
         }
-        renderMessages();
     }
+
 
     elSend.onclick = async ()=>{
         const to = (elTo.value||"").trim();

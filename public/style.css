@@ -31,7 +31,7 @@ body {
 }
 
 .chat:hover {
-    background: #f9fafb
+    background: #1877f21a;
 }
 
 .chat .phone {
@@ -53,7 +53,7 @@ body {
     flex: 1;
     overflow: auto;
     padding: 16px;
-    background: #f8fafc
+    background: floralwhite;
 }
 
 .bubble {
@@ -67,12 +67,12 @@ body {
 
 .out {
     margin-left: auto;
-    background: #dcfce7
+    background: #89e1bd;
 }
 
 .meta {
     font-size: 11px;
-    color: #6b7280;
+    color: #494d57;
     margin-top: 4px
 }
 
@@ -101,15 +101,55 @@ button {
     background: #10b981;
     color: #fff;
     border-radius: 8px;
-    cursor: pointer
+    cursor: pointer;
 }
 
 button:hover {
-    background: #0ea47a;
-    border-color: #0ea47a
+    background: #08815f;
+    border-color: #08815f;
 }
 
 .empty {
     margin: auto;
-    color: #9ca3af
+    color: #9ca3af;
+}
+
+.chat.selected {
+    background-color: #e0f7fa; /* color suave tipo "seleccionado" */
+    border-left: 4px solid #0097a7;
+    font-weight: bold;
+}
+
+/* Contenedor de mensajes */
+.messages {
+    flex: 1;                  /* Ocupa el espacio restante */
+    overflow-y: auto;          /* Activa scroll vertical */
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;                  /* Espacio entre burbujas */
+    background-color: #fafafa; /* Fondo claro */
+    scroll-behavior: smooth;   /* Desplazamiento suave */
+    max-height: calc(100vh - 180px); /* Altura dinámica según la ventana */
+}
+
+/* Burbujas de mensajes */
+.bubble {
+    max-width: 80%;
+    padding: 8px 12px;
+    border-radius: 12px;
+    word-wrap: break-word;
+    font-size: 14px;
+}
+
+/* Entrantes */
+.bubble.in {
+    align-self: flex-start;
+    background-color: #e1f5fe;
+}
+
+/* Salientes */
+.bubble.out {
+    align-self: flex-end;
+    background-color: #c8e6c9;
 }

@@ -101,6 +101,11 @@ function pushMessage({ phone, name, direction, text, status, wa_msg_id = null, t
 
 // ---------- App ----------
 const app = express();
+app.use((req, res, next) => {
+    console.log(`📥 ${req.method} ${req.url}`);
+    next();
+});
+
 app.use(bodyParser.json({ limit: "2mb" }));
 
 // 🚩 servir estáticos DESDE /public (corrección clave)
