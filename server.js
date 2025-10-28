@@ -5,10 +5,19 @@ import path from "path";
 import { fileURLToPath } from "url";
 import bodyParser from "body-parser";
 import Database from "better-sqlite3";
+import { messageStatus } from "./webhook-status.js";
+import { router as webhookRouter } from "./webhook-status.js";
+import { router as statusRouter } from "./status-api.js";
+
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+export const router = express.Router();
+
+//Mapa temporal en memoria para guardar estados por WAMID
+export const messageStatus = new Map();
 
 // ---------- Config ----------
 const PORT = process.env.PORT || 3000;
@@ -124,90 +133,70 @@ app.get("/webhook", (req, res) => {
 });
 
 // ===== Webhook eventos (POST) =====
-app.post("/webhook", (req, res) => {
+router.post("/webhook", (req, res) => {
     const body = req.body;
+
     try {
         if (body?.object !== "whatsapp_business_account") {
-            return res.sendStatus(200); // ignorar otros objetos
+            return res.sendStatus(200);
         }
 
         for (const entry of body.entry || []) {
             for (const change of entry.changes || []) {
                 const value = change.value || {};
-
-                // 1) Mensajes entrantes
-                const msg = value.messages?.[0];
-                if (msg) {
-                    const from = msg.from; // teléfono del usuario (E.164)
-                    const name = value.contacts?.[0]?.profile?.name || null;
-                    const text =
-                        msg.text?.body ||
-                        msg.interactive?.list_reply?.title ||
-                        msg.button?.text ||
-                        "(mensaje)";
-                    const tsSec = Number(msg.timestamp) || Math.floor(Date.now() / 1000);
-
-                    pushMessage({
-                        phone: from,
-                        name,
-                        direction: "in",
-                        text,
-                        status: "received",
-                        tsSec
-                    });
-                }
-
-                // 2) Estados de mensajes salientes
                 const st = value.statuses?.[0];
-                if (st) {
-                    const wa_msg_id = st.id;
-                    const status = st.status; // sent, delivered, read, failed, deleted
-                    const tsSec = Number(st.timestamp) || Math.floor(Date.now() / 1000);
-                    updateMessageStatusByWaId.run({ status, wa_msg_id, ts: tsSec });
+                if (!st) continue;
 
-                    // Actualiza last_ts de la conversación afectada (si conocemos el "to")
-                    const to = st.recipient_id; // E.164
-                    if (to) ensureConversation(to, null, tsSec);
+                const wamid = st.id;
+                const status = st.status;
+                const to = st.recipient_id;
+                const error = st.errors?.[0];
+                const code = error?.code || null;
+                const detail = error?.detail || error?.title || "";
+
+                if (
+                    status === "failed" &&
+                    (
+                        code === 131026 ||
+                        code === 131047 ||
+                        /not a valid WhatsApp user/i.test(detail) ||
+                        /not in WhatsApp/i.test(detail)
+                    )
+                ) {
+                    console.log(`❌ ${to} no tiene WhatsApp (${detail || code})`);
+                    messageStatus.set(wamid, { status: "no_whatsapp", phone: to });
+                } else if (["sent", "delivered", "read"].includes(status)) {
+                    console.log(`✅ ${to} confirmado (${status})`);
+                    messageStatus.set(wamid, { status, phone: to });
+                } else {
+                    console.log(`ℹ️ Estado recibido ${status} (${wamid})`);
+                    messageStatus.set(wamid, { status, phone: to });
                 }
             }
         }
+
         res.sendStatus(200);
-    } catch (e) {
-        console.error("Error en /webhook:", e);
+    } catch (err) {
+        console.error("❌ Error en /webhook:", err);
         res.sendStatus(500);
     }
 });
 
-// Devuelve el último estado conocido de un número
-app.get("/api/status-by-id/:wamid", (req, res) => {
+// ===== CONSULTA POR WAMID =====
+router.get("/api/status-by-id/:wamid", (req, res) => {
     const wamid = req.params.wamid;
-    console.log(`🔎 Consultando estado para WAMID: ${wamid}`);
+    const info = messageStatus.get(wamid);
 
-    try {
-        const row = db.prepare(`
-      SELECT m.status, m.ts, c.phone
-      FROM messages m
-      JOIN conversations c ON m.conversation_id = c.id
-      WHERE m.wa_msg_id = ?
-      LIMIT 1
-    `).get(wamid);
-
-        if (!row) {
-            console.log("⚠️ No se encontró registro para ese WAMID");
-            return res.json({ status: "unknown" });
-        }
-
-        console.log(`✅ Estado encontrado: ${row.status} para ${row.phone}`);
-
-        res.json({
-            status: row.status || "unknown",
-            phone: row.phone,
-            last_update: new Date(row.ts * 1000).toISOString()
-        });
-    } catch (err) {
-        console.error("❌ Error en /api/status-by-id:", err);
-        res.status(500).json({ status: "error", error: err.message });
+    if (!info) {
+        console.log(`⚠️ No hay estado para ${wamid}`);
+        return res.json({ status: "unknown" });
     }
+
+    res.json({
+        status: info.status,
+        phone: info.phone,
+        last_update: new Date().toISOString(),
+    });
 });
 
 // ===== API: Listar bandeja con mensajes =====
@@ -311,3 +300,7 @@ app.get("/health", (_req, res) => res.json({ ok: true }));
 app.listen(PORT, () => {
     console.log(`✅ Server escuchando en http://localhost:${PORT}`);
 });
+
+// 🧩 Rutas nuevas para WhatsApp Webhook y estado
+app.use(webhookRouter);
+app.use(statusRouter);
