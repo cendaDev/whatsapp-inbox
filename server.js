@@ -214,7 +214,6 @@ app.get("/api/status/:phone", (req, res) => {
     }
 });
 
-
 // ===== API: Listar bandeja con mensajes =====
 // GET /api/messages           → todas las conversaciones con sus mensajes
 // GET /api/messages?phone=... → solo una conversación específica
