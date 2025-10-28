@@ -181,19 +181,33 @@ app.post("/webhook", (req, res) => {
 // Devuelve el último estado conocido de un número
 app.get("/api/status-by-id/:wamid", (req, res) => {
     const wamid = req.params.wamid;
-    const row = db.prepare(`
-    SELECT m.status, m.ts, c.phone
-    FROM messages m
-    JOIN conversations c ON m.conversation_id = c.id
-    WHERE m.wa_msg_id = ?
-    LIMIT 1
-  `).get(wamid);
-    if (!row) return res.json({ status: "nada" });
-    res.json({
-        status: row.status || "nada",
-        phone: row.phone,
-        last_update: new Date(row.ts * 1000).toISOString()
-    });
+    console.log(`🔎 Consultando estado para WAMID: ${wamid}`);
+
+    try {
+        const row = db.prepare(`
+      SELECT m.status, m.ts, c.phone
+      FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE m.wa_msg_id = ?
+      LIMIT 1
+    `).get(wamid);
+
+        if (!row) {
+            console.log("⚠️ No se encontró registro para ese WAMID");
+            return res.json({ status: "unknown" });
+        }
+
+        console.log(`✅ Estado encontrado: ${row.status} para ${row.phone}`);
+
+        res.json({
+            status: row.status || "unknown",
+            phone: row.phone,
+            last_update: new Date(row.ts * 1000).toISOString()
+        });
+    } catch (err) {
+        console.error("❌ Error en /api/status-by-id:", err);
+        res.status(500).json({ status: "error", error: err.message });
+    }
 });
 
 // ===== API: Listar bandeja con mensajes =====
