@@ -161,44 +161,14 @@ app.post("/webhook", (req, res) => {
                 const st = value.statuses?.[0];
                 if (st) {
                     const wa_msg_id = st.id;
-                    const status = st.status;
+                    const status = st.status; // sent, delivered, read, failed, deleted
                     const tsSec = Number(st.timestamp) || Math.floor(Date.now() / 1000);
-                    const to = st.recipient_id;
-
-                    // Guardar el estado normal
                     updateMessageStatusByWaId.run({ status, wa_msg_id, ts: tsSec });
+
+                    // Actualiza last_ts de la conversación afectada (si conocemos el "to")
+                    const to = st.recipient_id; // E.164
                     if (to) ensureConversation(to, null, tsSec);
-
-                    // ⚠️ Verificar errores específicos
-                    const error = st.errors?.[0];
-                    if (status === "failed" && error) {
-                        const code = error.code;
-                        const detail = error.detail || error.title || "";
-
-                        // Detectar si el número no tiene WhatsApp
-                        if (
-                            code === 131026 ||
-                            code === 131047 ||
-                            detail.includes("not a valid WhatsApp user") ||
-                            detail.includes("Recipient phone number not in WhatsApp")
-                        ) {
-                            console.log(`❌ ${to} no tiene WhatsApp (${detail || code})`);
-                            // Puedes registrar esto en una tabla o archivo aparte
-                            db.prepare(
-                                `INSERT INTO messages (conversation_id, direction, text, status, ts)
-                                 VALUES ((SELECT id FROM conversations WHERE phone = ?), 'system',
-                                         'El número no tiene WhatsApp', 'failed', ?)`
-                            ).run(to, tsSec);
-                        } else {
-                            console.log(`⚠️ Error al enviar a ${to}: ${detail || code}`);
-                        }
-                    }
-
-                    if (["sent", "delivered", "read"].includes(status)) {
-                        console.log(`✅ Mensaje a ${to} confirmado (${status})`);
-                    }
                 }
-
             }
         }
         res.sendStatus(200);
@@ -210,17 +180,24 @@ app.post("/webhook", (req, res) => {
 
 // Devuelve el último estado conocido de un número
 app.get("/api/status/:phone", (req, res) => {
-    const phone = req.params.phone;
+    const phone = String(req.params.phone).replace(/\D/g, "");
+
     const stmt = db.prepare(`
-    SELECT m.status, m.ts
-    FROM messages m
-    JOIN conversations c ON m.conversation_id = c.id
-    WHERE c.phone = ?
-    ORDER BY m.ts DESC LIMIT 1
-  `);
-    const result = stmt.get(phone);
+        SELECT m.status, m.ts
+        FROM messages m
+                 JOIN conversations c ON m.conversation_id = c.id
+        WHERE c.phone LIKE '%' || ? OR c.phone LIKE '%' || ('57' || ?)
+        ORDER BY m.ts DESC LIMIT 1
+    `);
+
+    const result = stmt.get(phone, phone);
+
     if (!result) return res.json({ status: "unknown" });
-    res.json({ status: result.status, last_update: result.ts });
+
+    res.json({
+        status: result.status,
+        last_update: new Date(result.ts * 1000).toISOString(),
+    });
 });
 
 // ===== API: Listar bandeja con mensajes =====
