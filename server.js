@@ -179,39 +179,21 @@ app.post("/webhook", (req, res) => {
 });
 
 // Devuelve el último estado conocido de un número
-app.get("/api/status/:phone", (req, res) => {
-    try {
-        // Normalizar el número (solo dígitos)
-        const phone = String(req.params.phone).replace(/\D/g, "");
-
-        // Buscar el último estado de mensaje saliente ('out')
-        const stmt = db.prepare(`
-      SELECT m.status, m.ts
-      FROM messages m
-      JOIN conversations c ON m.conversation_id = c.id
-      WHERE (c.phone LIKE '%' || ? OR c.phone LIKE '%' || ('57' || ?))
-        AND m.direction = 'out'
-      ORDER BY m.ts DESC
-      LIMIT 1
-    `);
-
-        const result = stmt.get(phone, phone);
-
-        if (!result) {
-            console.log(`Estado desconocido para ${phone}`);
-            return res.json({ status: "unknown" });
-        }
-
-        const estado = result.status || "unknown";
-        const fecha = new Date(result.ts * 1000).toISOString();
-
-        console.log(`Estado ${estado} para ${phone} (actualizado: ${fecha})`);
-        return res.json({ status: estado, last_update: fecha });
-
-    } catch (e) {
-        console.error("Error en /api/status/:phone:", e);
-        res.status(500).json({ status: "error", error: e.message });
-    }
+app.get("/api/status-by-id/:wamid", (req, res) => {
+    const wamid = req.params.wamid;
+    const row = db.prepare(`
+    SELECT m.status, m.ts, c.phone
+    FROM messages m
+    JOIN conversations c ON m.conversation_id = c.id
+    WHERE m.wa_msg_id = ?
+    LIMIT 1
+  `).get(wamid);
+    if (!row) return res.json({ status: "unknown" });
+    res.json({
+        status: row.status || "unknown",
+        phone: row.phone,
+        last_update: new Date(row.ts * 1000).toISOString()
+    });
 });
 
 // ===== API: Listar bandeja con mensajes =====
