@@ -208,6 +208,21 @@ app.post("/webhook", (req, res) => {
     }
 });
 
+// Devuelve el último estado conocido de un número
+app.get("/api/status/:phone", (req, res) => {
+    const phone = req.params.phone;
+    const stmt = db.prepare(`
+    SELECT m.status, m.ts
+    FROM messages m
+    JOIN conversations c ON m.conversation_id = c.id
+    WHERE c.phone = ?
+    ORDER BY m.ts DESC LIMIT 1
+  `);
+    const result = stmt.get(phone);
+    if (!result) return res.json({ status: "unknown" });
+    res.json({ status: result.status, last_update: result.ts });
+});
+
 // ===== API: Listar bandeja con mensajes =====
 // GET /api/messages           → todas las conversaciones con sus mensajes
 // GET /api/messages?phone=... → solo una conversación específica
