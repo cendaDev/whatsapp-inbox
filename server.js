@@ -188,9 +188,9 @@ app.get("/api/status-by-id/:wamid", (req, res) => {
     WHERE m.wa_msg_id = ?
     LIMIT 1
   `).get(wamid);
-    if (!row) return res.json({ status: "unknown" });
+    if (!row) return res.json({ status: "nada" });
     res.json({
-        status: row.status || "unknown",
+        status: row.status || "nada",
         phone: row.phone,
         last_update: new Date(row.ts * 1000).toISOString()
     });
