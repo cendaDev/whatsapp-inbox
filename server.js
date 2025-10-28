@@ -180,25 +180,40 @@ app.post("/webhook", (req, res) => {
 
 // Devuelve el último estado conocido de un número
 app.get("/api/status/:phone", (req, res) => {
-    const phone = String(req.params.phone).replace(/\D/g, "");
+    try {
+        // Normalizar el número (solo dígitos)
+        const phone = String(req.params.phone).replace(/\D/g, "");
 
-    const stmt = db.prepare(`
-        SELECT m.status, m.ts
-        FROM messages m
-                 JOIN conversations c ON m.conversation_id = c.id
-        WHERE c.phone LIKE '%' || ? OR c.phone LIKE '%' || ('57' || ?)
-        ORDER BY m.ts DESC LIMIT 1
+        // Buscar el último estado de mensaje saliente ('out')
+        const stmt = db.prepare(`
+      SELECT m.status, m.ts
+      FROM messages m
+      JOIN conversations c ON m.conversation_id = c.id
+      WHERE (c.phone LIKE '%' || ? OR c.phone LIKE '%' || ('57' || ?))
+        AND m.direction = 'out'
+      ORDER BY m.ts DESC
+      LIMIT 1
     `);
 
-    const result = stmt.get(phone, phone);
+        const result = stmt.get(phone, phone);
 
-    if (!result) return res.json({ status: "unknown" });
+        if (!result) {
+            console.log(`Estado desconocido para ${phone}`);
+            return res.json({ status: "unknown" });
+        }
 
-    res.json({
-        status: result.status,
-        last_update: new Date(result.ts * 1000).toISOString(),
-    });
+        const estado = result.status || "unknown";
+        const fecha = new Date(result.ts * 1000).toISOString();
+
+        console.log(`Estado ${estado} para ${phone} (actualizado: ${fecha})`);
+        return res.json({ status: estado, last_update: fecha });
+
+    } catch (e) {
+        console.error("Error en /api/status/:phone:", e);
+        res.status(500).json({ status: "error", error: e.message });
+    }
 });
+
 
 // ===== API: Listar bandeja con mensajes =====
 // GET /api/messages           → todas las conversaciones con sus mensajes
