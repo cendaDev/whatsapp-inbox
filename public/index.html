@@ -30,6 +30,7 @@
     let data = [];
     let selectedPhone = null;
     let searchTerm = "";
+    let previousMessageCounts = {}; // Guardar conteo de mensajes por conversación
 
     const elChats = document.getElementById("chats");
     const elMsgs  = document.getElementById("messages");
@@ -110,6 +111,72 @@
             elChats.innerHTML = '<div class="empty" style="padding: 20px; text-align: center; color: #999;">No se encontraron conversaciones</div>';
         }
     }
+
+    function renderMessages(){
+        const conv = data.find(c => c.phone === selectedPhone);
+        if(!conv){
+            elTitle.textContent = "Selecciona un chat";
+            elMsgs.innerHTML = `<div class="empty">No hay chat seleccionado</div>`;
+            return;
+        }
+        elTitle.textContent = `${conv.name ? conv.name+" · " : ""}${conv.phone}`;
+        elMsgs.innerHTML = "";
+        conv.messages.forEach(m=>{
+            const b = document.createElement("div");
+            b.className = "bubble " + (m.direction === "out" ? "out" : "in");
+            const status = m.direction === "out" ? ` · ${m.status||"sent"}` : "";
+            b.innerHTML = `
+            <div>${(m.text||"").replace(/</g,"&lt;")}</div>
+            <div class="meta">${fmt(m.ts)}${status}</div>
+        `;
+            elMsgs.appendChild(b);
+            elMsgs.scrollTop = elMsgs.scrollHeight;
+        });
+    }
+
+    function renderChats() {
+        elChats.innerHTML = "";
+
+        // Filtrar conversaciones por término de búsqueda
+        const filtered = data.filter(conv => {
+            if (!searchTerm) return true;
+            return conv.phone.toLowerCase().includes(searchTerm) ||
+                (conv.name && conv.name.toLowerCase().includes(searchTerm));
+        });
+
+        // Ordenar por último mensaje (más reciente primero)
+        filtered.sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0));
+
+        filtered.forEach(conv => {
+            const div = document.createElement("div");
+            div.className = "chat";
+            if (conv.phone === selectedPhone) {
+                div.classList.add("selected");
+            }
+
+            div.onclick = () => {
+                selectedPhone = conv.phone;
+                elTo.value = conv.phone;
+
+                document.querySelectorAll(".chat").forEach(c => c.classList.remove("selected"));
+                div.classList.add("selected");
+
+                renderMessages();
+            };
+
+            div.innerHTML = `
+            <div class="phone">${conv.name ? conv.name + " · " : ""}${conv.phone}</div>
+            <div class="when">${fmt(conv.last_ts)}</div>
+        `;
+            elChats.appendChild(div);
+        });
+
+        // Mostrar mensaje si no hay resultados
+        if (filtered.length === 0) {
+            elChats.innerHTML = '<div class="empty" style="padding: 20px; text-align: center; color: #999;">No se encontraron conversaciones</div>';
+        }
+    }
+
 
 
     function renderMessages(){
