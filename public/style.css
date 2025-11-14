@@ -153,3 +153,17 @@ button:hover {
     align-self: flex-end;
     background-color: #c8e6c9;
 }
+
+.search-box {
+    padding: 10px;
+    background: #f0f0f0;
+    border-bottom: 1px solid #ddd;
+}
+
+.search-box input {
+    width: 100%;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 14px;
+}
