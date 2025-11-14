@@ -30,7 +30,6 @@
     let data = [];
     let selectedPhone = null;
     let searchTerm = "";
-    let previousMessageCounts = {}; // Guardar conteo de mensajes por conversación
 
     const elChats = document.getElementById("chats");
     const elMsgs  = document.getElementById("messages");
@@ -40,7 +39,6 @@
     const elSend  = document.getElementById("send");
     const elSearch = document.getElementById("search");
 
-    // Evento de búsqueda
     elSearch.oninput = (e) => {
         searchTerm = e.target.value.toLowerCase().trim();
         renderChats();
@@ -54,24 +52,29 @@
     function renderChats() {
         elChats.innerHTML = "";
 
-        // Filtrar conversaciones por término de búsqueda
         const filtered = data.filter(conv => {
             if (!searchTerm) return true;
             return conv.phone.toLowerCase().includes(searchTerm) ||
                 (conv.name && conv.name.toLowerCase().includes(searchTerm));
         });
 
-        // Ordenar por último mensaje (más reciente primero)
-        filtered.sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0));
+        // Ordenar: primero los no leídos, luego por timestamp
+        filtered.sort((a, b) => {
+            const aHasUnread = a.messages.some(m => m.direction === "in" && !m.read);
+            const bHasUnread = b.messages.some(m => m.direction === "in" && !m.read);
+
+            if (aHasUnread && !bHasUnread) return -1;
+            if (!aHasUnread && bHasUnread) return 1;
+
+            return (b.last_ts || 0) - (a.last_ts || 0);
+        });
 
         filtered.forEach(conv => {
             const div = document.createElement("div");
             div.className = "chat";
 
-            // Verificar si hay mensajes no leídos (entrantes sin leer)
-            const hasUnread = conv.messages.some(m =>
-                m.direction === "in" && (!m.read || m.read === false)
-            );
+            // Solo marcar como no leído si hay mensajes entrantes sin leer
+            const hasUnread = conv.messages.some(m => m.direction === "in" && !m.read);
 
             if (hasUnread) {
                 div.classList.add("unread");
@@ -85,7 +88,7 @@
                 selectedPhone = conv.phone;
                 elTo.value = conv.phone;
 
-                // Marcar todos los mensajes entrantes como leídos
+                // Marcar mensajes entrantes como leídos
                 conv.messages.forEach(m => {
                     if (m.direction === "in") {
                         m.read = true;
@@ -96,17 +99,16 @@
                 div.classList.add("selected");
 
                 renderMessages();
-                renderChats(); // Volver a renderizar para actualizar el estado visual
+                renderChats();
             };
 
             div.innerHTML = `
-            <div class="phone">${conv.name ? conv.name + " · " : ""}${conv.phone}</div>
-            <div class="when">${fmt(conv.last_ts)}</div>
-        `;
+                <div class="phone">${conv.name ? conv.name + " · " : ""}${conv.phone}</div>
+                <div class="when">${fmt(conv.last_ts)}</div>
+            `;
             elChats.appendChild(div);
         });
 
-        // Mostrar mensaje si no hay resultados
         if (filtered.length === 0) {
             elChats.innerHTML = '<div class="empty" style="padding: 20px; text-align: center; color: #999;">No se encontraron conversaciones</div>';
         }
@@ -126,76 +128,9 @@
             b.className = "bubble " + (m.direction === "out" ? "out" : "in");
             const status = m.direction === "out" ? ` · ${m.status||"sent"}` : "";
             b.innerHTML = `
-            <div>${(m.text||"").replace(/</g,"&lt;")}</div>
-            <div class="meta">${fmt(m.ts)}${status}</div>
-        `;
-            elMsgs.appendChild(b);
-            elMsgs.scrollTop = elMsgs.scrollHeight;
-        });
-    }
-
-    function renderChats() {
-        elChats.innerHTML = "";
-
-        // Filtrar conversaciones por término de búsqueda
-        const filtered = data.filter(conv => {
-            if (!searchTerm) return true;
-            return conv.phone.toLowerCase().includes(searchTerm) ||
-                (conv.name && conv.name.toLowerCase().includes(searchTerm));
-        });
-
-        // Ordenar por último mensaje (más reciente primero)
-        filtered.sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0));
-
-        filtered.forEach(conv => {
-            const div = document.createElement("div");
-            div.className = "chat";
-            if (conv.phone === selectedPhone) {
-                div.classList.add("selected");
-            }
-
-            div.onclick = () => {
-                selectedPhone = conv.phone;
-                elTo.value = conv.phone;
-
-                document.querySelectorAll(".chat").forEach(c => c.classList.remove("selected"));
-                div.classList.add("selected");
-
-                renderMessages();
-            };
-
-            div.innerHTML = `
-            <div class="phone">${conv.name ? conv.name + " · " : ""}${conv.phone}</div>
-            <div class="when">${fmt(conv.last_ts)}</div>
-        `;
-            elChats.appendChild(div);
-        });
-
-        // Mostrar mensaje si no hay resultados
-        if (filtered.length === 0) {
-            elChats.innerHTML = '<div class="empty" style="padding: 20px; text-align: center; color: #999;">No se encontraron conversaciones</div>';
-        }
-    }
-
-
-
-    function renderMessages(){
-        const conv = data.find(c => c.phone === selectedPhone);
-        if(!conv){
-            elTitle.textContent = "Selecciona un chat";
-            elMsgs.innerHTML = `<div class="empty">No hay chat seleccionado</div>`;
-            return;
-        }
-        elTitle.textContent = `${conv.name ? conv.name+" · " : ""}${conv.phone}`;
-        elMsgs.innerHTML = "";
-        conv.messages.forEach(m=>{
-            const b = document.createElement("div");
-            b.className = "bubble " + (m.direction === "out" ? "out" : "in");
-            const status = m.direction === "out" ? ` · ${m.status||"sent"}` : "";
-            b.innerHTML = `
-            <div>${(m.text||"").replace(/</g,"&lt;")}</div>
-            <div class="meta">${fmt(m.ts)}${status}</div>
-        `;
+                <div>${(m.text||"").replace(/</g,"&lt;")}</div>
+                <div class="meta">${fmt(m.ts)}${status}</div>
+            `;
             elMsgs.appendChild(b);
             elMsgs.scrollTop = elMsgs.scrollHeight;
         });
@@ -204,10 +139,37 @@
     async function load() {
         try {
             const res = await fetch("/api/messages");
-            data = await res.json();
+            const newData = await res.json();
 
+            newData.forEach(conv => {
+                const oldConv = data.find(c => c.phone === conv.phone);
+
+                if (oldConv) {
+                    // Conservar estado de lectura existente
+                    conv.messages.forEach((m, idx) => {
+                        const oldMsg = oldConv.messages[idx];
+                        if (oldMsg) {
+                            m.read = oldMsg.read;
+                        } else if (m.direction === "in") {
+                            // Nuevo mensaje entrante
+                            m.read = false;
+                        }
+                    });
+                } else {
+                    // Nueva conversación: marcar entrantes como no leídos
+                    conv.messages.forEach(m => {
+                        if (m.direction === "in") {
+                            m.read = false;
+                        }
+                    });
+                }
+            });
+
+            data = newData;
             renderChats();
-            renderMessages();
+            if (selectedPhone) {
+                renderMessages();
+            }
         } catch (err) {
             console.error("Error al cargar mensajes:", err);
         }
