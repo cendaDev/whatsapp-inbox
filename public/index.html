@@ -84,10 +84,18 @@
                 selectedPhone = conv.phone;
                 elTo.value = conv.phone;
 
+                // Marcar todos los mensajes entrantes como leídos
+                conv.messages.forEach(m => {
+                    if (m.direction === "in") {
+                        m.read = true;
+                    }
+                });
+
                 document.querySelectorAll(".chat").forEach(c => c.classList.remove("selected"));
                 div.classList.add("selected");
 
                 renderMessages();
+                renderChats(); // Volver a renderizar para actualizar el estado visual
             };
 
             div.innerHTML = `
@@ -102,6 +110,7 @@
             elChats.innerHTML = '<div class="empty" style="padding: 20px; text-align: center; color: #999;">No se encontraron conversaciones</div>';
         }
     }
+
 
     function renderMessages(){
         const conv = data.find(c => c.phone === selectedPhone);
