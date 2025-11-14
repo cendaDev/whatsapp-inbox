@@ -66,6 +66,16 @@
         filtered.forEach(conv => {
             const div = document.createElement("div");
             div.className = "chat";
+
+            // Verificar si hay mensajes no leídos (entrantes sin leer)
+            const hasUnread = conv.messages.some(m =>
+                m.direction === "in" && (!m.read || m.read === false)
+            );
+
+            if (hasUnread) {
+                div.classList.add("unread");
+            }
+
             if (conv.phone === selectedPhone) {
                 div.classList.add("selected");
             }
