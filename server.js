@@ -106,7 +106,7 @@ function pushMessage({ phone, name, direction, text, status, wa_msg_id = null, t
 // ---------- App ----------
 const app = express();
 app.use((req, res, next) => {
-    console.log(`📥 ${req.method} ${req.url}`);
+    console.log(`📥 ${req.method} ${req.url} - ${new Date().toISOString()}`);
     next();
 });
 
@@ -186,7 +186,7 @@ app.post("/webhook", (req, res) => {
                             detail.includes("not a valid WhatsApp user") ||
                             detail.includes("Recipient phone number not in WhatsApp")
                         ) {
-                            console.log(`❌ ${to} no tiene WhatsApp (${detail || code})`);
+                            console.log(`❌ ${to} no tiene WhatsApp (${detail || code}) - ${new Date().toISOString()}`);
 
                             // ✅ Guardar en memoria (para consulta inmediata)
                             messageStatus.set(wa_msg_id, {
@@ -209,7 +209,7 @@ app.post("/webhook", (req, res) => {
                                 console.warn("⚠️ No se pudo registrar en DB:", dbErr.message);
                             }
                         } else {
-                            console.log(`⚠️ Error al enviar a ${to}: ${detail || code}`);
+                            console.log(`⚠️ Error al enviar a ${to}: ${detail || code} - ${new Date().toISOString()}`);
                         }
                     }
 
@@ -354,5 +354,5 @@ app.get("/", (_req, res) => {
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
 app.listen(PORT, () => {
-    console.log(`✅ Server escuchando en http://localhost:${PORT}`);
+    console.log(`✅ Server escuchando en http://localhost:${PORT} - ${new Date().toISOString()}`);
 });
